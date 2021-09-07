@@ -21,7 +21,7 @@ char txBuffer[UDP_TX_PACKET_MAX_SIZE + 1]; // buffer to hold outgoing packet
 WiFiUDP udp;
 
 osip_t *osip;
-osip_message_t *message;
+//osip_message_t *message;
 
 void setup() {
   IPAddress myIP;
@@ -73,11 +73,19 @@ void setup() {
   osip_trace_initialize_func(END_TRACE_LEVEL, &printf_trace_func);
   osip_set_cb_send_message(osip, &cb_send_udp_sip_msg);
   osip_set_message_callback(osip, OSIP_IST_INVITE_RECEIVED, &cb_ist_invite_received);
+  osip_set_message_callback(osip, OSIP_IST_ACK_RECEIVED, &cb_ist_ack_received);
   osip_set_kill_transaction_callback(osip, OSIP_IST_KILL_TRANSACTION, &cb_ist_kill_transaction);
   Serial.println("Ready!");
 }
 
 void loop() {
+  // TODO: Somewhere on each INVITE -> BUSY transaction I'm losing 72 bytes of heap.
+  // 31968 31896 31824 31752 31680
+  // After about for or five transactions it starts failing
+  // Sending an additional TRYING response makes it worse: 144 bytes per transaction
+  // 31880 31736 31592
+  // Seems clear that there's something wrong with the message sending
+  // Could be in building the message, processing the message through the FSM, and/or the UDP stuff
   process_udp();
   process_osip();
 //    Serial.println("Parsing SIP message...");
@@ -137,19 +145,20 @@ void process_udp() {
       Serial.println("oSIP event added.");
     }
 
+    Serial.printf("Number of IST transactions: %d\n", osip_list_size(&osip->osip_ist_transactions));
     digitalWrite(LED_BUILTIN, HIGH);
   }
 }
 
 void process_osip() {
-  osip_ict_execute(osip);
+//  osip_ict_execute(osip);
   osip_ist_execute(osip);
-  osip_nict_execute(osip);
-  osip_nist_execute(osip);
-  osip_timers_ict_execute(osip);
+//  osip_nict_execute(osip);
+//  osip_nist_execute(osip);
+//  osip_timers_ict_execute(osip);
   osip_timers_ist_execute(osip);
-  osip_timers_nict_execute(osip);
-  osip_timers_nist_execute(osip);
+//  osip_timers_nict_execute(osip);
+//  osip_timers_nist_execute(osip);
 }
 
 int cb_send_udp_sip_msg(osip_transaction_t* txn, osip_message_t* msg, char* host, int port, int sock) {
@@ -220,11 +229,11 @@ void cb_ist_invite_received(int type, osip_transaction_t *txn, osip_message_t *m
   osip_message_t *response;
   osip_event_t *evt;
 
-  build_response(msg, &response);
-  osip_message_set_status_code(response, SIP_TRYING);
-  osip_message_set_reason_phrase(response, osip_strdup("Trying"));
-  evt = osip_new_outgoing_sipmessage(response);
-  osip_transaction_add_event(txn, evt);
+//  build_response(msg, &response);
+//  osip_message_set_status_code(response, SIP_TRYING);
+//  osip_message_set_reason_phrase(response, osip_strdup("Trying"));
+//  evt = osip_new_outgoing_sipmessage(response);
+//  osip_transaction_add_event(txn, evt);
 
   build_response(msg, &response);
   osip_message_set_status_code(response, SIP_TEMPORARILY_UNAVAILABLE);
@@ -235,10 +244,16 @@ void cb_ist_invite_received(int type, osip_transaction_t *txn, osip_message_t *m
   Serial.println("Invite response sent (480 Temporarily unavailable)");
 }
 
+void cb_ist_ack_received(int type, osip_transaction_t *txn, osip_message_t *msg) {
+  Serial.println("Ack received");
+  
+  //osip_transaction_free(txn);
+}
+
 void cb_ist_kill_transaction(int type, osip_transaction_t *txn) {
   // TODO: Print the Call-ID?
   Serial.println("Transaction killed.");
-  osip_remove_transaction(osip, txn);
+  osip_transaction_free(txn);
 }
 
 
