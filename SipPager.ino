@@ -4,15 +4,7 @@
 #include <WiFiUdp.h>
 #include <osip.h>
 
-const char *WiFiSSID    = "YourSSID";          // WiFi SSID
-const char *WiFiPSK     = "YourPassword";  // WiFi WPA2 preshared key
-
-const char *WiFiIP      = "192.168.1.89";       // WiFi IP of the ESP
-const char *WiFiGW      = "192.168.1.1";        // WiFi GW
-const char *WiFiNM      = "255.255.255.0";      // WiFi NM
-const char *WiFiDNS     = "192.168.1.1";        // WiFi DNS
-
-const unsigned int localPort = 5060;      // local port to listen on
+#include "config.h"
 
 // buffers for receiving and sending data
 char rxBuffer[UDP_TX_PACKET_MAX_SIZE + 1]; // buffer to hold incoming packet
@@ -86,36 +78,24 @@ void loop() {
   // 31880 31736 31592
   // Seems clear that there's something wrong with the message sending
   // Could be in building the message, processing the message through the FSM, and/or the UDP stuff
+  // It looks like it's in building the message. If I just build and immediately free, it still happens
+  // - It's not the "via" stuff
+  // Turns out I was calling osip_call_id_clone() twice -- the first clone was probably leaking?
+  // Still seeing a leak though (this is with one message): 32000 31960 31920 31880
+  // Currently leaking 40 bytes per transaction. I plugged up 32 bytes
+  // A Call-ID contains these things: 30iWaAtRmq 192.168.1.249
+  // Let's tackle those 40 bytes
+  // Calling osip_message_init() followed by osip_message_free() doesn't leak, so it must be affected by something I'm doing
+  // It's the call to osip_message_set_user_agent().
+  // It looks like it already copies the input string, so no need to osip_strdup()
+  // Removing the osip_strdup() from the value passed into osip_message_set_user_agent() fixed it
   process_udp();
   process_osip();
-//    Serial.println("Parsing SIP message...");
-//    osip_message_init(&message);
-//    if (osip_message_parse(message, rxBuffer, n) != 0) {
-//      Serial.println("Failed to parse SIP message");
-//    } else {
-//      Serial.println("Parsed SIP message");
-//      char *buf;
-//      size_t len;
-//      Serial.println("Printing SIP message...");
-//      osip_message_to_str(message, &buf, &len);
-//      Serial.println(buf);
-//      osip_free(buf);
-//    }
-//    osip_message_free(message);
-
-    // send a reply, to the IP address and port that sent us the packet we received
-//    udp.beginPacket(udp.remoteIP(), udp.remotePort());
-//    udp.write(txBuffer);
-//    udp.endPacket();
-
-//    digitalWrite(LED_BUILTIN, HIGH);
-//  }
-
 }
 
 void process_udp() {
   // if there's data available, read a packet
-  // TODO: packet reassembly. Looks like these babies get split up at 1024 bytes
+  // TODO: packet reassembly. Looks like these babies get split up at 1024 bytes (maybe not, actually?)
   int packetSize = udp.parsePacket();
   if (packetSize) {
     digitalWrite(LED_BUILTIN, LOW);
@@ -194,13 +174,12 @@ int build_response(osip_message_t *request, osip_message_t **response) {
   osip_message_t *msg;
   osip_message_init(&msg);
 
-  osip_call_id_clone(request->call_id, &msg->call_id);
-  osip_to_clone(request->to, &msg->to);
+  osip_to_clone(request->to, &msg->to);  
   osip_cseq_clone(request->cseq, &msg->cseq);
   osip_call_id_clone(request->call_id, &msg->call_id);
 
   int pos = 0;
-  while (!osip_list_eol (&request->vias, pos)) {
+  while (!osip_list_eol(&request->vias, pos)) {
     osip_via_t *srcVia;
     osip_via_t *dstVia;
 
@@ -216,7 +195,8 @@ int build_response(osip_message_t *request, osip_message_t **response) {
 
   osip_to_set_tag(msg->to, osip_strdup("8637729"));
   osip_message_set_version(msg, osip_strdup("SIP/2.0"));
-  osip_message_set_user_agent(msg, osip_strdup("EspPager/0.1.0 (osip2/5.2.1)"));
+  // Do not use osip_strdup() for this call: it leaks memory, since it copies the string anyway
+  osip_message_set_user_agent(msg, "EspPager/0.1.0 (osip2/5.2.1)");
 
   *response = msg;
   return 0;
@@ -229,11 +209,11 @@ void cb_ist_invite_received(int type, osip_transaction_t *txn, osip_message_t *m
   osip_message_t *response;
   osip_event_t *evt;
 
-//  build_response(msg, &response);
-//  osip_message_set_status_code(response, SIP_TRYING);
-//  osip_message_set_reason_phrase(response, osip_strdup("Trying"));
-//  evt = osip_new_outgoing_sipmessage(response);
-//  osip_transaction_add_event(txn, evt);
+  build_response(msg, &response);
+  osip_message_set_status_code(response, SIP_TRYING);
+  osip_message_set_reason_phrase(response, osip_strdup("Trying"));
+  evt = osip_new_outgoing_sipmessage(response);
+  osip_transaction_add_event(txn, evt);
 
   build_response(msg, &response);
   osip_message_set_status_code(response, SIP_TEMPORARILY_UNAVAILABLE);
@@ -247,7 +227,7 @@ void cb_ist_invite_received(int type, osip_transaction_t *txn, osip_message_t *m
 void cb_ist_ack_received(int type, osip_transaction_t *txn, osip_message_t *msg) {
   Serial.println("Ack received");
   
-  //osip_transaction_free(txn);
+  osip_transaction_free(txn);
 }
 
 void cb_ist_kill_transaction(int type, osip_transaction_t *txn) {
