@@ -13,7 +13,6 @@ char txBuffer[UDP_TX_PACKET_MAX_SIZE + 1]; // buffer to hold outgoing packet
 WiFiUDP udp;
 
 osip_t *osip;
-//osip_message_t *message;
 
 void setup() {
   IPAddress myIP;
@@ -94,8 +93,6 @@ void loop() {
 }
 
 void process_udp() {
-  // if there's data available, read a packet
-  // TODO: packet reassembly. Looks like these babies get split up at 1024 bytes (maybe not, actually?)
   int packetSize = udp.parsePacket();
   if (packetSize) {
     digitalWrite(LED_BUILTIN, LOW);
@@ -174,7 +171,7 @@ int build_response(osip_message_t *request, osip_message_t **response) {
   osip_message_t *msg;
   osip_message_init(&msg);
 
-  osip_to_clone(request->to, &msg->to);  
+  osip_to_clone(request->to, &msg->to);
   osip_cseq_clone(request->cseq, &msg->cseq);
   osip_call_id_clone(request->call_id, &msg->call_id);
 
@@ -226,16 +223,13 @@ void cb_ist_invite_received(int type, osip_transaction_t *txn, osip_message_t *m
 
 void cb_ist_ack_received(int type, osip_transaction_t *txn, osip_message_t *msg) {
   Serial.println("Ack received");
-  
   osip_transaction_free(txn);
 }
 
 void cb_ist_kill_transaction(int type, osip_transaction_t *txn) {
-  // TODO: Print the Call-ID?
-  Serial.println("Transaction killed.");
+  Serial.println("Transaction killed");
   osip_transaction_free(txn);
 }
-
 
 void printf_trace_func(const char *fi, int li, osip_trace_level_t level, const char *chfr, va_list ap) {
     const char* desc = "       ";
@@ -273,9 +267,3 @@ void printf_trace_func(const char *fi, int li, osip_trace_level_t level, const c
 //    printf ("\n");
     Serial.printf("|%s| <%s: %i> | %s\n", desc, fi, li, chfr);
 }
-
-/*
-  test (shell/netcat):
-  --------------------
-    nc -u 192.168.esp.address 8888
-*/
